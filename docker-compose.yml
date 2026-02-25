@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - DB_DSN=root:pass@tcp(db:3306)/url_shortener?parseTime=true
+      - REDIS_ADDR=redis:6379
+      - KAFKA_BROKER=kafka:29092 # ADD THIS for the Go code
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=pass
+      - MYSQL_DATABASE=url_shortener
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-u", "root", "-ppass"]
+      timeout: 10s
+      retries: 10
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  migrate:
+    image: migrate/migrate
+    volumes:
+      - ./migrations:/migrations
+    command:
+     - -path=/migrations/
+     - -database=mysql://root:pass@tcp(db:3306)/url_shortener
+     - up
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
